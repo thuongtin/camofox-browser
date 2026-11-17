@@ -655,6 +655,8 @@ Browser behavior can be tuned in `camofox.config.json`:
 | `CAMOUFOX_EXECUTABLE` | External Camoufox executable to use instead of downloading/launching the bundled cache. Must point to a Camoufox bundle with sibling resources. | - |
 | `CAMOUFOX_EXECUTABLE_PATH` | Compatibility alias for `CAMOUFOX_EXECUTABLE` | - |
 | `CAMOFOX_EXECUTABLE_PATH` | Compatibility alias for `CAMOUFOX_EXECUTABLE` | - |
+| `CAMOFOX_TRUST_SYSTEM_CA` | Opt in to the host system CA store. Accepts exactly `true` or `false`; see [Custom and system certificate authorities](#custom-and-system-certificate-authorities). | `false` |
+| `CAMOFOX_EXTRA_CA_CERT` | Absolute path to a readable regular file containing exactly one PEM X.509 CA certificate. Adds trust without disabling TLS verification. | - |
 | `CAMOFOX_DISABLE_DEFAULT_ADDONS` | Set to `1`/`true` to skip downloading and launching the default uBlock Origin (UBO) addon. Useful for deployments where the addons.mozilla.org download is unreliable or unwanted (a failed download otherwise leaves a broken addon cache that blocks startup). | `0` |
 | `CAMOFOX_COOKIES_DIR` | Directory for cookie files | `~/.camofox/cookies` |
 | `CAMOFOX_UPLOADS_DIR` | Directory allowed for `POST /tabs/:tabId/upload` file attachments. Paths outside it, including symlink escapes, are rejected. | `~/.camofox/uploads` |
@@ -694,6 +696,34 @@ Browser behavior can be tuned in `camofox.config.json`:
 | `VNC_BIND` | noVNC listen address; set `0.0.0.0` to reach noVNC through a published container port | `127.0.0.1` |
 | `VNC_RFB_BIND` | Native VNC listen address; non-loopback requires `VNC_PASSWORD` and does not change with `VNC_BIND` | `127.0.0.1` |
 | `NOVNC_PORT` | noVNC web UI port | `6080` |
+
+## Custom and system certificate authorities
+
+CA trust is opt-in. With both variables unset (or `CAMOFOX_TRUST_SYSTEM_CA=false` and no extra certificate), Camofox leaves the existing browser launch and trust configuration unchanged. Neither option disables certificate or hostname verification, changes the OS trust store, or installs additional dependencies.
+
+```bash
+# Trust a private CA for this server's browser sessions.
+CAMOFOX_EXTRA_CA_CERT=/absolute/path/company-root-ca.pem npm start
+
+# Also trust the host's system CA store.
+CAMOFOX_TRUST_SYSTEM_CA=true \
+CAMOFOX_EXTRA_CA_CERT=/absolute/path/company-root-ca.pem npm start
+
+# Run the local CA regression tests.
+npm run test:ca
+```
+
+`CAMOFOX_TRUST_SYSTEM_CA` accepts only the literal strings `true` and `false`. `CAMOFOX_EXTRA_CA_CERT` requires one complete PEM CA certificate, not a leaf certificate, PEM bundle, private key, or a relative path. Invalid settings fail startup with a JSON error naming the variable. The certificate is read and validated at startup; restart after changing its file or the system CA store.
+
+- **Windows/macOS system trust:** sets Firefox's `security.enterprise_roots.enabled=true`. Firefox imports supported OS enterprise roots; this is not an export of every OS trust rule.
+- **Linux system trust:** reads `tls.getCACertificates('system')`, keeps certificates marked as CAs, deduplicates them, and installs each PEM through Firefox's `Certificates.Install` policy. This API requires Node.js 22.15.0 or newer; Node.js 24 is recommended. Node uses its OpenSSL system-store rules, including `SSL_CERT_FILE`/`SSL_CERT_DIR`; this is not an exact reproduction of p11-kit purpose or distrust metadata. See [Node TLS documentation](https://nodejs.org/docs/latest-v24.x/api/tls.html#tlsgetcacertificatestype) and [system-store rules](https://nodejs.org/docs/latest-v24.x/api/cli.html#--use-system-ca).
+- **Extra CA on any platform:** snapshots the validated PEM and adds it through `Certificates.Install`. Firefox uses the policy's `CT,CT,` trust flags, which do not preserve OS per-purpose trust restrictions. See [Mozilla certificate policies](https://mozilla.github.io/policy-templates/#certificates).
+
+When certificate installation is needed, Camofox makes a private temporary copy of the complete Camoufox bundle and merges the certificate policy there, preserving existing policies. It does not patch browser binaries or modify the shared cache/bundle. A bundled policy file can cause Firefox to ignore `browser.policies.alternatePath`, so the private copy uses its own `distribution/policies.json`. Copy-on-write is used where supported; otherwise startup incurs a full bundle copy, with corresponding disk-space and startup-time overhead. System-trust-only on Windows/macOS does not need this copy. A policy that explicitly disables enterprise roots is rejected rather than silently overridden. CA installation requires a self-contained browser bundle; external wrapper executables with resources in a separate directory are not supported in CA mode and fail at startup.
+
+Browser profiles remain ephemeral: the session-persistence plugin stores session state, not a persistent certificate database. Graceful shutdown removes the private bundle and PEM files; abrupt termination such as `SIGKILL` can leave a `camofox-ca-*` directory in the OS temporary directory. Remove only directories belonging to a stopped instance.
+
+Verified with Node.js 24 and Camoufox `152.0.4` / `beta.30`: custom CA on macOS arm64 and Linux arm64; Linux system trust using a process-scoped OpenSSL store (`SSL_CERT_FILE`, empty `SSL_CERT_DIR`). REST tests cover trusted-page snapshots, rejection of a second CA and a wrong hostname, public HTTPS, and disabling the feature again. The test does not change host OS trust. Camoufox 158, Windows runtime, and native macOS/Windows enterprise-root import have not been verified.
 
 ## Interactive desktop browser
 

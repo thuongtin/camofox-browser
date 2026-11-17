@@ -74,7 +74,25 @@ import {
   browserErrorStatus, browserErrorCode, browserErrorRecovery, isRetryableBrowserError,
 } from './lib/browser-errors.js';
 
-const CONFIG = loadConfig();
+import { prepareCaTrust } from './lib/launcher.js';
+import { launchPath } from 'camoufox-js/dist/pkgman.js';
+
+let CONFIG;
+let caTrust;
+try {
+  CONFIG = loadConfig();
+  caTrust = prepareCaTrust(CONFIG, {
+    executablePath: (CONFIG.extraCaPem || CONFIG.trustSystemCa)
+      ? (CONFIG.camoufoxExecutablePath || launchPath()) : undefined,
+  });
+} catch (error) {
+  console.error(JSON.stringify({ level: 'error', msg: 'startup configuration failed', error: error.message }));
+  process.exit(1);
+}
+// Only remove our private copy, never the operator's policy or cache. During
+// normal shutdown the browser is closed before exit; an abrupt kill can leave
+// a private temp directory but cannot change trust for another server.
+process.once('exit', () => caTrust.cleanup());
 
 // --- Crash reporter (opt-in, anonymized GitHub issues) ---
 import { readFileSync } from 'fs';
@@ -1391,11 +1409,13 @@ async function launchBrowserInstance() {
         locale: launchLocale({ hasProxy: !!proxyPool, directIdentity: CONFIG.directIdentity }),
         virtual_display: vdDisplay,
         exclude_addons: CONFIG.disableDefaultAddons ? ['UBO'] : undefined,
+        ...(Object.keys(caTrust.firefoxUserPrefs).length ? { firefox_user_prefs: caTrust.firefoxUserPrefs } : {}),
       }, {
         attempt,
         proxyServer: launchProxy?.server || null,
         proxySession: launchProxy?.sessionId || null,
       });
+      if (caTrust.executablePath) options.executablePath = caTrust.executablePath;
       options.proxy = normalizePlaywrightProxy(options.proxy);
       // Playwright's launcher defaults handleSIGTERM/SIGINT/SIGHUP to true,
       // registering its own process signal handlers that send Browser.close

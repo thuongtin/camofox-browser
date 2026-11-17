@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -63,7 +64,7 @@ describe('yt-dlp post-install hook', () => {
   it('downloads the pinned release, verifies it, and makes it executable', () => {
     const digest = createHash('sha256').update(readFileSync(harness.fixture)).digest('hex');
 
-    execFileSync('sh', [hook.pathname], {
+    execFileSync('sh', [fileURLToPath(hook)], {
       env: harness.env({ YT_DLP_SHA256: digest }),
       stdio: 'pipe',
     });
@@ -80,7 +81,7 @@ describe('yt-dlp post-install hook', () => {
   });
 
   it('fails before chmod when the downloaded binary digest differs', () => {
-    expect(() => execFileSync('sh', [hook.pathname], {
+    expect(() => execFileSync('sh', [fileURLToPath(hook)], {
       env: harness.env({ YT_DLP_SHA256: '0'.repeat(64) }),
       stdio: 'pipe',
     })).toThrow();
